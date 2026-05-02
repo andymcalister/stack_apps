@@ -295,6 +295,13 @@ with ctrl3:
 profile = RISK_PROFILES[risk_profile_name]
 months_total = projection_years * 12
 
+# Set defaults — overridden inside expander if user adjusts
+blended_return  = profile["base_return"]
+blended_default = profile["default_rate"]
+pct_a = int(profile["grade_a"]*100)
+pct_b = int(profile["grade_b"]*100)
+pct_c = 100 - pct_a - pct_b
+
 # Risk profile info
 risk_color = profile["color"]
 risk_label = profile["label"]
@@ -347,12 +354,8 @@ with st.expander("🔧 Fine-tune Risk Allocation", expanded=False):
              <span style="color:#EF4444;font-weight:700">{blended_default*100:.3f}%/yr</span></div>
     </div>
     """, unsafe_allow_html=True)
-else:
-    blended_return  = profile["base_return"]
-    blended_default = profile["default_rate"]
-    pct_a = int(profile["grade_a"]*100)
-    pct_b = int(profile["grade_b"]*100)
-    pct_c = 100 - pct_a - pct_b
+
+
 
 # ══════════════════════════════════════════════════════════════
 # SIMULATE
