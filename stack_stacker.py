@@ -273,7 +273,7 @@ with ctrl1:
     )
     projection_years = st.slider(
         "📅 Projection Period",
-        min_value=1, max_value=10, value=5, step=1,
+        min_value=1, max_value=30, value=5, step=1,
         format="%d years"
     )
 

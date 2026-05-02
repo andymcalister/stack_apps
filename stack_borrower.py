@@ -80,6 +80,13 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; }
 .stSlider > div > div > div { background: #00C2A8 !important; }
 .stSlider > div > div > div > div { background: #00C2A8 !important; }
 
+/* Slider and widget labels */
+div[data-testid="stWidgetLabel"] p { color: #FFFFFF !important; font-weight: 500 !important; }
+div[data-testid="stSlider"] label,
+div[data-testid="stSlider"] label p { color: #FFFFFF !important; font-weight: 500 !important; }
+div[data-testid="stSelectSlider"] label,
+div[data-testid="stSelectSlider"] label p { color: #FFFFFF !important; font-weight: 500 !important; }
+
 div[data-testid="stMetric"] {
     background: #0F2035;
     border: 1px solid rgba(255,255,255,0.07);
