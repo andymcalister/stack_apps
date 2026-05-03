@@ -36,33 +36,17 @@ iframe{
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load and patch HTML ───────────────────────────────────────
+# ── Load HTML and inject platform URL directly ────────────────
 html_content = open(os.path.join(_DIR, "stack_website.html")).read()
 
-# Simply open platform in a new tab — clean, reliable, no redirect loops
-patch = f"""
-<style>
-html,body{{margin:0!important;padding:0!important;
-    overflow-x:hidden;overflow-y:auto!important;height:auto!important;}}
-</style>
-<script>
-window.addEventListener('DOMContentLoaded', function() {{
-    document.querySelectorAll('a').forEach(function(a) {{
-        var h = a.getAttribute('href') || '';
-        var txt = a.textContent || '';
-        if (
-            h.indexOf('nav=platform') > -1 ||
-            a.classList.contains('enter-platform-btn') ||
-            txt.indexOf('Platform') > -1 ||
-            txt.indexOf('Enter') > -1
-        ) {{
-            a.href = '{platform_url}';
-            a.target = '_blank';
-            a.rel = 'noopener';
-        }}
-    }});
-}});
-</script>"""
+# Replace the placeholder directly in Python — no JS needed
+html_content = html_content.replace("PLATFORM_URL_PLACEHOLDER", platform_url)
 
-patched = html_content.replace('</head>', patch + '</head>')
-components.html(patched, height=900, scrolling=True)
+# Reset body scroll
+body_fix = """<style>
+html,body{margin:0!important;padding:0!important;
+overflow-x:hidden;overflow-y:auto!important;height:auto!important;}
+</style>"""
+html_content = html_content.replace('</head>', body_fix + '</head>')
+
+components.html(html_content, height=900, scrolling=True)

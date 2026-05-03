@@ -7,6 +7,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
 <style>
+
+  /* Streamlit iframe gap fix */
+  html { margin: 0 !important; padding: 0 !important; min-height: 100%; }
+  body { margin: 0 !important; padding: 0 !important; }
+
   :root {
     --navy:    #0A1628;
     --navy2:   #0F2035;
@@ -520,7 +525,7 @@
     <li><a href="#team">Team</a></li>
     <li><a href="#invest">Investors</a></li>
   </ul>
-  <a class="nav-cta enter-platform-btn" href="?nav=platform" style="background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 20px rgba(0,194,168,0.4)">Enter Platform →</a>
+  <a class="nav-cta enter-platform-btn" href="PLATFORM_URL_PLACEHOLDER" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 20px rgba(0,194,168,0.4)">Enter Platform →</a>
 </nav>
 
 <!-- HERO -->
@@ -532,7 +537,7 @@
     <h1>Lending &amp;<br>Investing,<br><em>Reimagined.</em></h1>
     <p class="hero-sub">Stack connects borrowers who need affordable loans with investors who want superior returns. Two sides. One platform. Everyone wins.</p>
     <div class="hero-actions">
-      <a class="btn-primary enter-platform-btn" href="?nav=platform" style="font-size:1rem;padding:1rem 2.5rem;background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 30px rgba(0,194,168,0.45);border-radius:8px">🚀 Take Me to the Platform</a>
+      <a class="btn-primary enter-platform-btn" href="PLATFORM_URL_PLACEHOLDER" target="_blank" rel="noopener" style="font-size:1rem;padding:1rem 2.5rem;background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 30px rgba(0,194,168,0.45);border-radius:8px">🚀 Take Me to the Platform</a>
       <a class="btn-outline" href="#how" style="font-size:1rem;padding:1rem 2rem">Learn More ↓</a>
     </div>
     <div class="hero-stats">
@@ -951,7 +956,7 @@
     <h2>Ready to Stack?</h2>
     <p>We're raising $1.5M on a SAFE with a 20% discount rate and $10M pre-money valuation cap. Join us.</p>
     <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
-      <a class="btn-primary enter-platform-btn" href="?nav=platform" style="font-size:1rem;padding:1rem 2.5rem;background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 30px rgba(0,194,168,0.45);border-radius:8px">🚀 Take Me to the Platform</a>
+      <a class="btn-primary enter-platform-btn" href="PLATFORM_URL_PLACEHOLDER" target="_blank" rel="noopener" style="font-size:1rem;padding:1rem 2.5rem;background:linear-gradient(135deg,#00C2A8,#009E88);box-shadow:0 0 30px rgba(0,194,168,0.45);border-radius:8px">🚀 Take Me to the Platform</a>
       <a class="btn-outline" href="mailto:andym@stacklend.co" style="font-size:1rem;padding:1rem 2rem">Contact Andy →</a>
     </div>
     <p class="cta-terms">$1.5M SAFE · 20% Discount Rate · $10M Pre-Money Cap · andym@stacklend.co</p>
@@ -991,12 +996,7 @@
   });
 
   // Handle platform navigation
-  document.querySelectorAll('.enter-platform-btn').forEach(btn => {
-    btn.addEventListener('click', function(e) {
-      e.preventDefault();
-      window.location.href = '?nav=platform';
-    });
-  });
+  // platform nav handled by href directly
 
 </script>
 </body>
