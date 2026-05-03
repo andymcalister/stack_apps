@@ -2,11 +2,47 @@ import streamlit as st
 import hashlib
 import re
 import os
+import sys
+
+# Ensure all files resolve relative to this script's directory
+_DIR = os.path.dirname(os.path.abspath(__file__))
+def _run(filename):
+    exec(open(os.path.join(_DIR, filename)).read(), globals())
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, date
 from supabase import create_client, Client
+from stack_mfa import render_mfa_setup, render_mfa_verify, generate_totp_secret
+from stack_engine import match_loan_to_stackers, apportion_repayment
+
+# ── MOBILE DETECTION ─────────────────────────────────────────
+def inject_mobile_detector():
+    """Inject JS that sets ?mobile=1 query param if on a mobile device."""
+    st.markdown("""
+    <script>
+    (function() {
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+            || window.innerWidth < 768;
+        const url = new URL(window.location.href);
+        const current = url.searchParams.get('mobile');
+        if (isMobile && current !== '1') {
+            url.searchParams.set('mobile', '1');
+            window.location.replace(url.toString());
+        } else if (!isMobile && current === '1') {
+            url.searchParams.delete('mobile');
+            window.location.replace(url.toString());
+        }
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+def is_mobile() -> bool:
+    try:
+        params = st.query_params
+        return params.get("mobile", "0") == "1"
+    except:
+        return False
 
 # ── PAGE CONFIG ──────────────────────────────────────────────
 st.set_page_config(
@@ -24,6 +60,7 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 supabase = get_supabase()
+st.session_state['_supabase'] = supabase
 
 # ── HELPERS ──────────────────────────────────────────────────
 def hash_password(password: str) -> str:
@@ -318,6 +355,19 @@ hr { border-color: rgba(255,255,255,0.06) !important; margin: 1.5rem 0 !importan
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0,194,168,0.3); border-radius: 2px; }
 
+/* ── MOBILE OVERRIDES ── */
+@media (max-width: 768px) {
+    .block-container { padding: 0.5rem 0.75rem !important; }
+    .float-badge { display: none !important; }
+    .orb { display: none !important; }
+    .grid-bg { opacity: 0.3 !important; }
+    .ticker-wrap { font-size: 0.7rem !important; }
+    div[data-testid="stButton"] button {
+        font-size: 0.95rem !important;
+        padding: 0.6rem 1rem !important;
+    }
+}
+
 /* ── TOGGLE ── */
 div[data-testid="stToggle"] label p { color: #CBD5E1 !important; }
 
@@ -474,6 +524,10 @@ div[data-testid="stCheckbox"] { margin-bottom: 0.25rem; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── MOBILE DETECTION INJECT ─────────────────────────────────
+inject_mobile_detector()
+IS_MOBILE = is_mobile()
+
 # ── DYNAMIC BACKGROUND ELEMENTS ─────────────────────────────
 st.markdown("""
 <div class="grid-bg"></div>
@@ -576,6 +630,8 @@ if "cookie_consent" not in st.session_state: st.session_state.cookie_consent = F
 if "auth_tab"       not in st.session_state: st.session_state.auth_tab       = "login"
 if "page"           not in st.session_state: st.session_state.page           = "home"
 if "cookie_modal"   not in st.session_state: st.session_state.cookie_modal   = True
+if "mfa_pending"    not in st.session_state: st.session_state.mfa_pending    = False
+if "mfa_user_temp"  not in st.session_state: st.session_state.mfa_user_temp  = None
 
 # ── COOKIE MODAL (blocking) ──────────────────────────────────
 if not st.session_state.cookie_consent:
@@ -620,13 +676,14 @@ if not st.session_state.cookie_consent:
     st.stop()
 
 # ── NAV BAR ──────────────────────────────────────────────────
-nav_l, nav_r = st.columns([2, 3])
+nav_l, nav_r = st.columns([2, 3]) if not IS_MOBILE else st.columns([1, 2])
 with nav_l:
     st.markdown('<div style="font-family:Syne,sans-serif;font-weight:800;font-size:1.6rem;letter-spacing:0.15em;color:#FFFFFF;padding:0.4rem 0;display:flex;align-items:center;gap:0.1rem">STACK<span style="color:#00C2A8;text-shadow:0 0 20px rgba(0,194,168,0.5)">.</span></div>', unsafe_allow_html=True)
 with nav_r:
     if st.session_state.logged_in:
         user = st.session_state.user
         nc1, nc2, nc3, nc4, nc5 = st.columns(5)
+        # nc6 is logout added below
         with nc1:
             if st.button("🏠 Home"):       st.session_state.page = "home";     st.rerun()
         with nc2:
@@ -636,6 +693,11 @@ with nav_r:
         with nc4:
             if st.button("❓ FAQ"):        st.session_state.page = "faq";      st.rerun()
         with nc5:
+            if st.button("🔐 MFA"):
+                st.session_state.page = "mfa_setup"
+                st.rerun()
+        nc6, nc7 = st.columns(2)
+        with nc6:
             if st.button("🚪 Log Out"):
                 st.session_state.logged_in = False
                 st.session_state.user      = None
@@ -686,55 +748,228 @@ if st.session_state.page == "home":
     </div>
     """, unsafe_allow_html=True)
 
-    # CTA buttons styled via HTML/JS click triggers using query params workaround
+    # ── CTA BUTTONS ──────────────────────────────────────────────
+    # Inject into <head> via JS so it bypasses Streamlit's shadow DOM nesting
     st.markdown("""
-    <div style="display:flex;gap:1.25rem;margin:2rem 0 2.5rem;flex-wrap:wrap">
-        <div style="flex:1;min-width:220px;max-width:320px">
-            <div style="background:linear-gradient(135deg,#00C2A8,#009E88);
-                border-radius:14px;padding:1.6rem 2rem;cursor:pointer;
-                box-shadow:0 8px 32px rgba(0,194,168,0.35);
-                transition:all 0.25s;position:relative;overflow:hidden">
-                <div style="position:absolute;top:-20px;right:-20px;width:80px;height:80px;
-                    background:rgba(255,255,255,0.06);border-radius:50%"></div>
-                <div style="font-size:1.75rem;margin-bottom:0.5rem">💳</div>
-                <div style="font-family:Syne,sans-serif;font-size:1.2rem;font-weight:800;
-                    color:#060E1A;margin-bottom:0.3rem">I want to Borrow</div>
-                <div style="font-size:0.82rem;color:rgba(6,14,26,0.65);font-weight:500">
-                    Loans from $5k – $25k · Below 17% APR
-                </div>
-            </div>
-        </div>
-        <div style="flex:1;min-width:220px;max-width:320px">
-            <div style="background:rgba(15,32,53,0.8);
-                border:1px solid rgba(245,166,35,0.4);
-                border-radius:14px;padding:1.6rem 2rem;cursor:pointer;
-                box-shadow:0 8px 32px rgba(245,166,35,0.12);
-                transition:all 0.25s;position:relative;overflow:hidden">
-                <div style="position:absolute;top:-20px;right:-20px;width:80px;height:80px;
-                    background:rgba(245,166,35,0.05);border-radius:50%"></div>
-                <div style="font-size:1.75rem;margin-bottom:0.5rem">📈</div>
-                <div style="font-family:Syne,sans-serif;font-size:1.2rem;font-weight:800;
-                    color:#FFFFFF;margin-bottom:0.3rem">I want to Stack</div>
-                <div style="font-size:0.82rem;color:rgba(245,166,35,0.7);font-weight:500">
-                    Target returns above 10% · From $5,000
-                </div>
-            </div>
-        </div>
+    <script>
+    (function injectCTAStyles() {
+        const id = 'stack-cta-styles';
+        if (document.getElementById(id)) return;
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = `
+            @keyframes shimmerB {
+                0%   { background-position: -300% center; }
+                100% { background-position:  300% center; }
+            }
+            @keyframes shimmerS {
+                0%   { background-position: -300% center; }
+                100% { background-position:  300% center; }
+            }
+            @keyframes glowB {
+                0%,100% { box-shadow: 0 0 25px 5px rgba(0,255,210,0.55),
+                                      0 0 70px 10px rgba(0,194,168,0.3),
+                                      inset 0 1px 0 rgba(255,255,255,0.35); }
+                50%      { box-shadow: 0 0 50px 12px rgba(0,255,210,0.8),
+                                       0 0 120px 20px rgba(0,194,168,0.45),
+                                       inset 0 1px 0 rgba(255,255,255,0.35); }
+            }
+            @keyframes glowS {
+                0%,100% { box-shadow: 0 0 25px 5px rgba(255,190,0,0.55),
+                                      0 0 70px 10px rgba(245,166,35,0.3),
+                                      inset 0 1px 0 rgba(255,255,255,0.2); }
+                50%      { box-shadow: 0 0 50px 12px rgba(255,210,0,0.75),
+                                       0 0 120px 20px rgba(245,166,35,0.45),
+                                       inset 0 1px 0 rgba(255,255,255,0.2); }
+            }
+
+            /* target every button inside the borrow wrapper */
+            .cta-borrow button,
+            .cta-borrow [data-testid="stBaseButton-secondary"],
+            .cta-borrow [kind="secondary"],
+            .cta-borrow [data-testid*="Button"] button {
+                background: linear-gradient(105deg,
+                    #00FFE0 0%,
+                    #00C2A8 20%,
+                    #FFFFFF 35%,
+                    #00C2A8 50%,
+                    #009E88 65%,
+                    #FFFFFF 80%,
+                    #00FFE0 100%
+                ) !important;
+                background-size: 300% auto !important;
+                animation: shimmerB 2.8s linear infinite, glowB 2.2s ease-in-out infinite !important;
+                color: #001A14 !important;
+                border: 2px solid rgba(0,255,224,0.9) !important;
+                border-radius: 16px !important;
+                padding: 1.8rem 2rem !important;
+                font-family: Syne, sans-serif !important;
+                font-size: 1.25rem !important;
+                font-weight: 900 !important;
+                min-height: 130px !important;
+                width: 100% !important;
+                letter-spacing: -0.02em !important;
+                line-height: 1.4 !important;
+                transition: transform 0.15s ease !important;
+                text-shadow: 0 1px 0 rgba(0,80,60,0.3) !important;
+            }
+            .cta-borrow button:hover { transform: translateY(-4px) scale(1.015) !important; }
+            .cta-borrow button:active { transform: translateY(0) scale(0.99) !important; }
+
+            .cta-stack button,
+            .cta-stack [data-testid="stBaseButton-secondary"],
+            .cta-stack [kind="secondary"],
+            .cta-stack [data-testid*="Button"] button {
+                background: linear-gradient(105deg,
+                    #FFE566 0%,
+                    #F5A623 20%,
+                    #FFFFFF 35%,
+                    #F5A623 50%,
+                    #D4820A 65%,
+                    #FFFFFF 80%,
+                    #FFE566 100%
+                ) !important;
+                background-size: 300% auto !important;
+                animation: shimmerS 2.8s linear infinite, glowS 2.2s ease-in-out infinite !important;
+                color: #1A0A00 !important;
+                border: 2px solid rgba(255,225,80,0.95) !important;
+                border-radius: 16px !important;
+                padding: 1.8rem 2rem !important;
+                font-family: Syne, sans-serif !important;
+                font-size: 1.25rem !important;
+                font-weight: 900 !important;
+                min-height: 130px !important;
+                width: 100% !important;
+                letter-spacing: -0.02em !important;
+                line-height: 1.4 !important;
+                transition: transform 0.15s ease !important;
+                text-shadow: 0 1px 0 rgba(80,40,0,0.3) !important;
+            }
+            .cta-stack button:hover { transform: translateY(-4px) scale(1.015) !important; }
+            .cta-stack button:active { transform: translateY(0) scale(0.99) !important; }
+        `;
+        document.head.appendChild(style);
+
+        // Retry injection after Streamlit re-renders
+        setTimeout(injectCTAStyles, 800);
+        setTimeout(injectCTAStyles, 2000);
+        setTimeout(injectCTAStyles, 4000);
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+    # ── Pure HTML CTA cards — Streamlit buttons can't be styled ──
+    # Use JS postMessage to set session and trigger rerun via query param
+    borrow_dest = "?nav=borrower"
+    stack_dest  = "?nav=stacker"
+
+    mobile_flex = "flex-direction:column;" if IS_MOBILE else ""
+    card_width  = "100%" if IS_MOBILE else "calc(50% - 0.625rem)"
+
+    st.markdown(f"""
+    <style>
+    @keyframes shimmerB {{
+        0%   {{ background-position: -300% center; }}
+        100% {{ background-position:  300% center; }}
+    }}
+    @keyframes shimmerS {{
+        0%   {{ background-position: -300% center; }}
+        100% {{ background-position:  300% center; }}
+    }}
+    @keyframes glowB {{
+        0%,100% {{ box-shadow: 0 0 28px 6px rgba(0,255,210,0.6), 0 0 80px 12px rgba(0,194,168,0.35); }}
+        50%      {{ box-shadow: 0 0 55px 14px rgba(0,255,210,0.85), 0 0 130px 24px rgba(0,194,168,0.55); }}
+    }}
+    @keyframes glowS {{
+        0%,100% {{ box-shadow: 0 0 28px 6px rgba(255,195,0,0.6), 0 0 80px 12px rgba(245,166,35,0.35); }}
+        50%      {{ box-shadow: 0 0 55px 14px rgba(255,215,0,0.85), 0 0 130px 24px rgba(245,166,35,0.55); }}
+    }}
+    .stack-cta-wrap {{
+        display: flex;
+        gap: 1.25rem;
+        margin: 2.5rem 0 1.5rem;
+        {mobile_flex}
+    }}
+    .stack-cta-btn {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        width: {card_width};
+        min-height: 140px;
+        border-radius: 18px;
+        cursor: pointer;
+        text-decoration: none;
+        padding: 1.75rem 2rem;
+        font-family: Syne, sans-serif;
+        font-weight: 900;
+        font-size: 1.3rem;
+        letter-spacing: -0.02em;
+        line-height: 1.3;
+        transition: transform 0.2s ease;
+        position: relative;
+        overflow: hidden;
+        border: none;
+        outline: none;
+    }}
+    .stack-cta-btn:hover {{ transform: translateY(-5px) scale(1.02); text-decoration: none; }}
+    .stack-cta-btn:active {{ transform: translateY(-1px) scale(0.99); }}
+    .stack-cta-btn .sub {{
+        font-size: 0.82rem;
+        font-weight: 500;
+        margin-top: 0.4rem;
+        opacity: 0.75;
+        letter-spacing: 0;
+    }}
+    .cta-b {{
+        background: linear-gradient(105deg,
+            #00FFE0 0%, #00C2A8 18%, #ffffff 30%,
+            #00C2A8 45%, #009E88 60%,
+            #ffffff 72%, #00FFE0 85%, #00C2A8 100%);
+        background-size: 300% auto;
+        color: #001A14 !important;
+        border: 2px solid rgba(0,255,224,0.9) !important;
+        animation: shimmerB 2.6s linear infinite, glowB 2s ease-in-out infinite;
+        text-shadow: 0 1px 2px rgba(0,60,40,0.25);
+    }}
+    .cta-s {{
+        background: linear-gradient(105deg,
+            #FFE566 0%, #F5A623 18%, #ffffff 30%,
+            #F5A623 45%, #D4820A 60%,
+            #ffffff 72%, #FFE566 85%, #F5A623 100%);
+        background-size: 300% auto;
+        color: #1A0A00 !important;
+        border: 2px solid rgba(255,225,70,0.95) !important;
+        animation: shimmerS 2.6s linear infinite, glowS 2s ease-in-out infinite;
+        text-shadow: 0 1px 2px rgba(80,40,0,0.25);
+    }}
+    </style>
+
+    <div class="stack-cta-wrap">
+        <a class="stack-cta-btn cta-b" href="{borrow_dest}" target="_self">
+            <span>💳&nbsp; I want to Borrow</span>
+            <span class="sub">Loans $5k – $25k &nbsp;·&nbsp; Below 17% APR</span>
+        </a>
+        <a class="stack-cta-btn cta-s" href="{stack_dest}" target="_self">
+            <span>📈&nbsp; I want to Stack</span>
+            <span class="sub">Target returns 10%+ &nbsp;·&nbsp; From $5,000</span>
+        </a>
     </div>
     """, unsafe_allow_html=True)
 
-    # Functional buttons below (hidden visually via column trick, full width)
-    cta1, cta2, cta3 = st.columns([1, 1, 3])
-    with cta1:
-        if st.button("💳  Get Started — Borrow", key="cta_borrow", use_container_width=True):
-            st.session_state.page = "auth" if not st.session_state.logged_in else "borrower"
-            st.session_state.auth_tab = "register"
-            st.rerun()
-    with cta2:
-        if st.button("📈  Get Started — Stack", key="cta_invest", use_container_width=True):
-            st.session_state.page = "auth" if not st.session_state.logged_in else "stacker"
-            st.session_state.auth_tab = "register"
-            st.rerun()
+    # Handle nav query params from HTML button clicks
+    _nav = st.query_params.get("nav", "")
+    if _nav == "borrower":
+        st.query_params.clear()
+        st.session_state.page = "auth" if not st.session_state.logged_in else "borrower"
+        st.session_state.auth_tab = "register"
+        st.rerun()
+    elif _nav == "stacker":
+        st.query_params.clear()
+        st.session_state.page = "auth" if not st.session_state.logged_in else "stacker"
+        st.session_state.auth_tab = "register"
+        st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -760,7 +995,13 @@ if st.session_state.page == "home":
     """, unsafe_allow_html=True)
 
     # Stats
-    s1, s2, s3, s4 = st.columns(4)
+    if IS_MOBILE:
+        s1, s2 = st.columns(2)
+        s3, s4 = st.columns(2)
+        stat_cols = [s1, s2, s3, s4]
+    else:
+        stat_cols = st.columns(4)
+    s1, s2, s3, s4 = stat_cols[0], stat_cols[1], stat_cols[2], stat_cols[3]
     stats = [
         ("$1.4T",  "US personal debt crisis"),
         ("<17%",   "Borrower interest rate"),
@@ -783,7 +1024,7 @@ if st.session_state.page == "home":
 
     # Two product cards
     st.markdown('<div class="section-label">Choose Your Path</div>', unsafe_allow_html=True)
-    pc1, pc2 = st.columns(2)
+    pc1, pc2 = (st.columns(1)[0], st.columns(1)[0]) if IS_MOBILE else st.columns(2)
 
     with pc1:
         st.markdown("""
@@ -849,7 +1090,11 @@ if st.session_state.page == "home":
 
     # How it works
     st.markdown('<div class="section-label">How Stack Works</div>', unsafe_allow_html=True)
-    h1, h2, h3, h4 = st.columns(4)
+    if IS_MOBILE:
+        h1, h2 = st.columns(2)
+        h3, h4 = st.columns(2)
+    else:
+        h1, h2, h3, h4 = st.columns(4)
     steps = [
         ("01", "Apply or Sign Up", "Create your account in minutes. Tell us whether you want to borrow or invest."),
         ("02", "Get Matched",      "Our algorithm matches borrowers with Stackers, spreading risk across multiple investors."),
@@ -885,7 +1130,8 @@ if st.session_state.page == "home":
         ("🌐", "FL Licensed · Expanding"),
         ("⚡", "Algorithm Matched"),
     ]
-    cols = st.columns(len(trust_items))
+    cols = st.columns(3 if IS_MOBILE else len(trust_items))
+    trust_items = trust_items[:3] if IS_MOBILE else trust_items
     for col, (icon, label) in zip(cols, trust_items):
         with col:
             st.markdown(f"""
@@ -922,11 +1168,26 @@ elif st.session_state.page == "auth":
                 else:
                     ok, result = login_user(login_email.strip().lower(), login_pw)
                     if ok:
-                        st.session_state.logged_in = True
-                        st.session_state.user      = result
-                        st.session_state.page      = "home"
-                        st.success(f"Welcome back, {result['first_name']}!")
-                        st.rerun()
+                        if result.get("mfa_enabled") and result.get("totp_secret"):
+                            # MFA enabled — require verification
+                            st.session_state.mfa_pending   = True
+                            st.session_state.mfa_user_temp = result
+                            st.session_state.page          = "mfa_verify"
+                            st.rerun()
+                        elif result.get("mfa_enabled") is False or not result.get("totp_secret"):
+                            # MFA not yet set up — log in and prompt setup
+                            st.session_state.logged_in = True
+                            st.session_state.user      = result
+                            st.session_state.page      = "mfa_setup"
+                            supabase.table("users").update({"last_login": datetime.utcnow().isoformat()}).eq("id", result["id"]).execute()
+                            st.info("🔐 For your security, please set up Two-Factor Authentication.")
+                            st.rerun()
+                        else:
+                            # Fallback
+                            st.session_state.logged_in = True
+                            st.session_state.user      = result
+                            st.session_state.page      = "mfa_setup"
+                            st.rerun()
                     else:
                         st.error(result)
 
@@ -1138,6 +1399,7 @@ elif st.session_state.page == "auth":
                     if ok:
                         st.success(f"🎉 Welcome to Stack, {reg_first}! Please log in.")
                         st.balloons()
+                        st.info("💡 Once logged in, we recommend enabling Two-Factor Authentication (MFA) for extra security.")
                     else:
                         st.error(msg)
 
@@ -1150,8 +1412,15 @@ elif st.session_state.page == "borrower":
         st.warning("Please log in to access the borrower calculator.")
         if st.button("Log In / Sign Up"): st.session_state.page = "auth"; st.rerun()
     else:
-        # Embed the borrower calculator inline
-        exec(open("stack_borrower.py").read())
+        user = st.session_state.user
+        # Logged-in borrower sees their portal, with calculator tab
+        bp_tab1, bp_tab2, bp_tab3 = st.tabs(["📋 My Loan", "📝 Apply", "💳 Calculator"])
+        with bp_tab1:
+            _run("stack_borrower_portal.py")
+        with bp_tab2:
+            _run("stack_loan_application.py")
+        with bp_tab3:
+            _run("stack_borrower.py")
 
 
 # ════════════════════════════════════════════════════════════
@@ -1162,7 +1431,12 @@ elif st.session_state.page == "stacker":
         st.warning("Please log in to access the Stacker dashboard.")
         if st.button("Log In / Sign Up"): st.session_state.page = "auth"; st.rerun()
     else:
-        exec(open("stack_stacker.py").read())
+        user = st.session_state.user
+        sp_tab1, sp_tab2 = st.tabs(["📈 My Portfolio", "🔬 Portfolio Modeller"])
+        with sp_tab1:
+            _run("stack_stacker_portal.py")
+        with sp_tab2:
+            _run("stack_stacker.py")
 
 
 # ════════════════════════════════════════════════════════════
@@ -1284,9 +1558,40 @@ elif st.session_state.page == "faq":
 # ── FOOTER ───────────────────────────────────────────────────
 st.markdown("<br><br>", unsafe_allow_html=True)
 # ════════════════════════════════════════════════════════════
+# PAGE: MFA VERIFICATION (at login)
+# ════════════════════════════════════════════════════════════
+if st.session_state.page == "mfa_verify":
+    _, mfa_col, _ = st.columns([1, 2, 1])
+    with mfa_col:
+        user_temp = st.session_state.mfa_user_temp
+        if user_temp and render_mfa_verify(user_temp["totp_secret"]):
+            st.session_state.logged_in    = True
+            st.session_state.user         = user_temp
+            st.session_state.mfa_pending  = False
+            st.session_state.mfa_user_temp = None
+            st.session_state.page         = "home"
+            supabase.table("users").update({"last_login": datetime.utcnow().isoformat()}).eq("id", user_temp["id"]).execute()
+            st.rerun()
+
+# ════════════════════════════════════════════════════════════
+# PAGE: MFA SETUP (post registration)
+# ════════════════════════════════════════════════════════════
+elif st.session_state.page == "mfa_setup":
+    if not st.session_state.logged_in:
+        st.session_state.page = "auth"
+        st.rerun()
+    else:
+        user = st.session_state.user
+        _, ms_col, _ = st.columns([1, 2, 1])
+        with ms_col:
+            if render_mfa_setup(user["email"], supabase, user["id"]):
+                st.session_state.page = "home"
+                st.rerun()
+
+# ════════════════════════════════════════════════════════════
 # PAGE: PRIVACY POLICY
 # ════════════════════════════════════════════════════════════
-if st.session_state.page == "privacy":
+elif st.session_state.page == "privacy":
     if st.button("← Back", key="back_privacy"): st.session_state.page="home"; st.rerun()
     st.markdown('''<div style="font-family:Syne,sans-serif;font-size:2rem;font-weight:800;margin-bottom:0.25rem">Privacy Policy</div>''', unsafe_allow_html=True)
     st.markdown('<div style="color:#64748B;font-size:0.85rem;margin-bottom:2rem">Last updated: April 2024 · Stack Financial Technologies Inc.</div>', unsafe_allow_html=True)
