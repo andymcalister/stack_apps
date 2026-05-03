@@ -17,6 +17,18 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500;600&display=swap');
 
+/* ── ALL WIDGET LABELS BRIGHT WHITE ── */
+label { color: #FFFFFF !important; opacity: 1 !important; }
+label p { color: #FFFFFF !important; opacity: 1 !important; font-weight: 500 !important; }
+div[data-testid="stWidgetLabel"] p { color: #FFFFFF !important; font-weight: 500 !important; }
+div[data-testid="stWidgetLabel"] { color: #FFFFFF !important; }
+
+/* ── SLIDER TRACK — TEAL NOT RED ── */
+[data-testid="stSlider"] [role="slider"] { background-color: #00C2A8 !important; }
+[data-testid="stSlider"] div[class*="TrackFill"] { background-color: #00C2A8 !important; }
+input[type="range"]::-webkit-slider-thumb { background: #00C2A8 !important; }
+input[type="range"]::-webkit-slider-runnable-track { background: #1E3A50 !important; }
+
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
     background-color: #0A1628;
