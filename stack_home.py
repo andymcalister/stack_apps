@@ -629,33 +629,24 @@ if "logged_in"      not in st.session_state: st.session_state.logged_in      = F
 if "user"           not in st.session_state: st.session_state.user           = None
 if "cookie_consent" not in st.session_state: st.session_state.cookie_consent = False
 if "auth_tab"       not in st.session_state: st.session_state.auth_tab       = "login"
-if "page"           not in st.session_state: st.session_state.page           = "landing"
+if "page"           not in st.session_state: st.session_state.page           = "home"
 if "cookie_modal"   not in st.session_state: st.session_state.cookie_modal   = True
 if "mfa_pending"    not in st.session_state: st.session_state.mfa_pending    = False
 if "mfa_user_temp"  not in st.session_state: st.session_state.mfa_user_temp  = None
 
-# ── LANDING PAGE ROUTING ─────────────────────────────────────
-# Check if user clicked "Enter Platform" from the landing page
+# ── PLATFORM ENTRY (from landing page) ───────────────────────
 _nav_param = st.query_params.get("nav", "")
-if _nav_param == "platform":
+if _nav_param == "borrower":
     st.query_params.clear()
-    st.session_state.page = "home"
+    st.session_state.page = "auth" if not st.session_state.logged_in else "borrower"
+    st.session_state.auth_tab = "register"
+    st.rerun()
+elif _nav_param == "stacker":
+    st.query_params.clear()
+    st.session_state.page = "auth" if not st.session_state.logged_in else "stacker"
+    st.session_state.auth_tab = "register"
     st.rerun()
 
-# Show landing page before anything else
-if st.session_state.page == "landing":
-    landing_html = open(os.path.join(_DIR, "stack_website.html")).read()
-    # Make it full-viewport with no Streamlit chrome
-    st.markdown("""
-    <style>
-    #MainMenu, header, footer { visibility: hidden; }
-    .block-container { padding: 0 !important; max-width: 100% !important; }
-    iframe { border: none; }
-    </style>
-    """, unsafe_allow_html=True)
-    _components_v1.html(landing_html, height=6000, scrolling=True)
-    # Also handle nav param that comes back from within the iframe HTML
-    st.stop()
 
 # ── COOKIE MODAL (blocking) ──────────────────────────────────
 if not st.session_state.cookie_consent:

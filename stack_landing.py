@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import os
 
 st.set_page_config(
@@ -8,63 +9,99 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Check if user clicked "Enter Platform" ─────────────────
-_goto = st.query_params.get("goto", "")
-if _goto == "platform":
+_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ── Handle platform redirect ──────────────────────────────────
+_nav = st.query_params.get("nav", "")
+if _nav == "platform":
     st.query_params.clear()
-    # Redirect to the platform app
-    # On Streamlit Cloud this will be the home app URL
-    PLATFORM_URL = st.secrets.get("PLATFORM_URL", "http://localhost:8502")
+    platform_url = st.secrets.get("PLATFORM_URL", "http://localhost:8502")
     st.markdown(f"""
-    <meta http-equiv="refresh" content="0; url={PLATFORM_URL}">
-    <script>window.location.href = "{PLATFORM_URL}";</script>
+    <meta http-equiv="refresh" content="0; url={platform_url}">
+    <script>window.location.href = '{platform_url}';</script>
     """, unsafe_allow_html=True)
     st.stop()
 
-# ── Hide all Streamlit chrome ───────────────────────────────
+# ── Kill Streamlit chrome ─────────────────────────────────────
 st.markdown("""
 <style>
-    #MainMenu, footer, header, [data-testid="stToolbar"],
-    [data-testid="stDecoration"], [data-testid="stStatusWidget"],
-    .stDeployButton { display: none !important; visibility: hidden !important; }
-    .block-container { padding: 0 !important; max-width: 100% !important; }
-    section.main > div { padding: 0 !important; }
-    html, body, [class*="css"] { margin: 0; padding: 0; overflow-x: hidden; }
-    .stApp { background: #0A1628; }
-    /* Remove iframe border */
-    iframe { border: none !important; display: block; }
+#MainMenu, header, footer,
+[data-testid="stToolbar"],[data-testid="stDecoration"],
+[data-testid="stHeader"],[data-testid="stBottom"],
+[data-testid="stStatusWidget"],[data-testid="stSidebarNav"],
+[data-testid="collapsedControl"] { display: none !important; }
+
+html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+}
+.stApp, .main {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+.block-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100vw !important;
+    height: 100vh !important;
+}
+section[data-testid="stMain"],
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"] {
+    padding: 0 !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+.stVerticalBlock { gap: 0 !important; padding: 0 !important; height: 100% !important; }
+.element-container { margin: 0 !important; padding: 0 !important; height: 100% !important; }
+
+/* iframe fills 100% with its OWN scroll */
+iframe {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    border: none !important;
+    z-index: 999999 !important;
+    overflow: auto !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load modified HTML ──────────────────────────────────────
-_DIR = os.path.dirname(os.path.abspath(__file__))
-html_path = os.path.join(_DIR, "stack_website_modified.html")
+# ── Load and patch HTML ───────────────────────────────────────
+html_content = open(os.path.join(_DIR, "stack_website.html")).read()
+platform_url = st.secrets.get("PLATFORM_URL", "http://localhost:8502")
 
-if not os.path.exists(html_path):
-    st.error("Marketing site HTML not found. Make sure stack_website_modified.html is in the same folder.")
-    st.stop()
-
-with open(html_path, "r") as f:
-    html_content = f.read()
-
-# ── Render fullscreen ───────────────────────────────────────
-# Use components.html for true full-page rendering
-import streamlit.components.v1 as components
-
-components.html(
-    html_content,
-    height=5000,   # tall enough for full page — scrolls internally
-    scrolling=True,
-)
-
-# ── Listen for postMessage from iframe ──────────────────────
-# JS bridge: if iframe signals "platform", redirect
-st.markdown("""
+patch = f"""<style>
+html, body {{
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow-x: hidden;
+    /* scroll happens here inside the iframe */
+    overflow-y: auto !important;
+    height: auto !important;
+}}
+</style>
 <script>
-window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'streamlit:setComponentValue' && e.data.value === 'platform') {
-        window.location.href = window.location.href.split('?')[0] + '?goto=platform';
-    }
-});
-</script>
-""", unsafe_allow_html=True)
+window.addEventListener('DOMContentLoaded', function() {{
+    document.querySelectorAll('a').forEach(function(a) {{
+        var h = a.getAttribute('href') || '';
+        if (h.indexOf('nav=platform') > -1 || a.classList.contains('enter-platform-btn')) {{
+            a.href = '{platform_url}';
+            a.target = '_top';
+        }}
+    }});
+}});
+</script>"""
+
+patched = html_content.replace('</head>', patch + '</head>')
+
+# scrolling=True lets the iframe scroll internally
+# height is just a hint — CSS overrides to 100vh fixed
+components.html(patched, height=900, scrolling=True)
