@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as _components_v1
 import hashlib
 import re
 import os
@@ -628,10 +629,33 @@ if "logged_in"      not in st.session_state: st.session_state.logged_in      = F
 if "user"           not in st.session_state: st.session_state.user           = None
 if "cookie_consent" not in st.session_state: st.session_state.cookie_consent = False
 if "auth_tab"       not in st.session_state: st.session_state.auth_tab       = "login"
-if "page"           not in st.session_state: st.session_state.page           = "home"
+if "page"           not in st.session_state: st.session_state.page           = "landing"
 if "cookie_modal"   not in st.session_state: st.session_state.cookie_modal   = True
 if "mfa_pending"    not in st.session_state: st.session_state.mfa_pending    = False
 if "mfa_user_temp"  not in st.session_state: st.session_state.mfa_user_temp  = None
+
+# ── LANDING PAGE ROUTING ─────────────────────────────────────
+# Check if user clicked "Enter Platform" from the landing page
+_nav_param = st.query_params.get("nav", "")
+if _nav_param == "platform":
+    st.query_params.clear()
+    st.session_state.page = "home"
+    st.rerun()
+
+# Show landing page before anything else
+if st.session_state.page == "landing":
+    landing_html = open(os.path.join(_DIR, "stack_website.html")).read()
+    # Make it full-viewport with no Streamlit chrome
+    st.markdown("""
+    <style>
+    #MainMenu, header, footer { visibility: hidden; }
+    .block-container { padding: 0 !important; max-width: 100% !important; }
+    iframe { border: none; }
+    </style>
+    """, unsafe_allow_html=True)
+    _components_v1.html(landing_html, height=6000, scrolling=True)
+    # Also handle nav param that comes back from within the iframe HTML
+    st.stop()
 
 # ── COOKIE MODAL (blocking) ──────────────────────────────────
 if not st.session_state.cookie_consent:
@@ -678,7 +702,13 @@ if not st.session_state.cookie_consent:
 # ── NAV BAR ──────────────────────────────────────────────────
 nav_l, nav_r = st.columns([2, 3]) if not IS_MOBILE else st.columns([1, 2])
 with nav_l:
-    st.markdown('<div style="font-family:Syne,sans-serif;font-weight:800;font-size:1.6rem;letter-spacing:0.15em;color:#FFFFFF;padding:0.4rem 0;display:flex;align-items:center;gap:0.1rem">STACK<span style="color:#00C2A8;text-shadow:0 0 20px rgba(0,194,168,0.5)">.</span></div>', unsafe_allow_html=True)
+    logo_col, back_col = st.columns([3,1])
+    with logo_col:
+        st.markdown('<div style="font-family:Syne,sans-serif;font-weight:800;font-size:1.6rem;letter-spacing:0.15em;color:#FFFFFF;padding:0.4rem 0;display:flex;align-items:center;gap:0.1rem">STACK<span style="color:#00C2A8;text-shadow:0 0 20px rgba(0,194,168,0.5)">.</span></div>', unsafe_allow_html=True)
+    with back_col:
+        if st.button("← stacklend.com", key="back_to_landing"):
+            st.session_state.page = "landing"
+            st.rerun()
 with nav_r:
     if st.session_state.logged_in:
         user = st.session_state.user
